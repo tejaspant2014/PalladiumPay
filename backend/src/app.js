@@ -13,4 +13,11 @@ app.use(express.json({limit: "50kb"}));
 app.use(express.urlencoded({extended: true, limit: "20kb"}))
 app.use(cookieParser());
 
+
+// routes
+
+import healthCheckRouter from "./routes/healthcheck.routes.js";
+
+app.use('/api/healthcheck', healthCheckRouter);
+
 export { app }      

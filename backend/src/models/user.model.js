@@ -43,20 +43,16 @@ const userSchema = new Schema(
       default: "user",
     },
 
-    kycStatus: {
-      type: String,
-      enum: ["pending", "verified", "rejected"],
-      default: "pending",
-    },
 
     homeCountry: {
       type: String,
       default: "IN",
     },
 
-    homeLocation: {
-      latitude: Number,
-      longitude: Number,
+    usualLocation: {
+        latitude: Number,
+        longitude: Number,
+        lastCalculatedAt: Date
     },
 
     failedLoginAttempts: {
