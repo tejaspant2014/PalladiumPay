@@ -1,6 +1,7 @@
-import mongoose, {mongo, Schema} from "mongoose";
+import mongoose, {Schema} from "mongoose";
+import jwt from "jsonwebtoken";
 
-const deviceSchema = new mongoose.Schema(
+const deviceSchema = new Schema(
     {
       user: {
         type: mongoose.Schema.Types.ObjectId,
@@ -66,5 +67,32 @@ const deviceSchema = new mongoose.Schema(
       timestamps: true,
     }
   );
+
+  deviceSchema.methods.generateAccessToken = function () {
+    return jwt.sign(
+        {
+            userId: this.user,
+            deviceId: this._id,
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        {
+            expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
+        }
+    );
+  };
+
+  deviceSchema.methods.generateRefreshToken = function () {
+    return jwt.sign(
+        {
+            userId: this.user,
+            deviceId: this._id,
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        {
+            expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
+        }
+    );
+};
+
 
   export const Device = mongoose.model("Device", deviceSchema);
