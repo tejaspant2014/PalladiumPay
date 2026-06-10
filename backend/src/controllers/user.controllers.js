@@ -361,8 +361,6 @@ const loginUser = asyncHandler(async (req, res) => {
                 200,
                 {
                     user: loggedInUser,
-                    accessToken,
-                    refreshToken,
                 },
                 "Login successful"
             )
@@ -415,6 +413,214 @@ const getMe = asyncHandler(async (req, res) => {
 
     return res.status(200).json(new ApiResponse(200,{"name" : user.name, "phone": user.phone, "email": user.email}, "User fetched successfully!" ))
 })
+
+const updateUser = asyncHandler(async (req, res) => {
+    const { name, email, phone } = req.body;
+    const user = req.user;
+    if(!user){
+        throw new ApiError(403, "Unauthorized Access");
+    }
+
+    const updatedFields = {};
+    if(name?.trim()){
+        updatedFields.name = name.trim();
+    }
+
+    if(email?.trim()){
+        updatedFields.email = email.trim().toLowerCase();
+        updatedFields.emailVerified = false;
+    }
+
+    if(phone?.trim()){
+        updatedFields.phone = phone.trim();
+        updatedFields.phoneVerified = false;
+    }
+
+    if (Object.keys(updatedFields).length === 0) {
+        throw new ApiError(
+            400,
+            "At least one field is required"
+        );
+    }
+
+    const userUpd = await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: updatedFields,
+        },
+        {
+            new: true,
+            runValidators: true,
+        }
+    ).select("-passwordHash");
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            userUpd,
+            "User updated successfully"
+        )
+    );
+})
+
+const changePassword = asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    if (
+        !currentPassword?.trim() ||
+        !newPassword?.trim()
+    ) {
+        throw new ApiError(
+            400,
+            "Current and new password are required"
+        );
+    }
+
+    const user = await User.findById(req.user._id);
+
+    const isPasswordCorrect =
+        await user.isPasswordCorrect(currentPassword);
+
+    if (!isPasswordCorrect) {
+        throw new ApiError(
+            401,
+            "Current password is incorrect"
+        );
+    }
+
+    user.passwordHash = newPassword;
+
+    await user.save();
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {},
+            "Password changed successfully"
+        )
+    );
+});
+
+const forgotPassword = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+
+    const normalizedEmail =
+        email?.trim().toLowerCase();
+
+    const user = await User.findOne({
+        email: normalizedEmail,
+    });
+
+    if (!user) {
+        throw new ApiError(
+            404,
+            "User not found"
+        );
+    }
+
+    const otp = generateOtp();
+
+    const otpHash =
+        await bcrypt.hash(otp, 10);
+
+    await OTP.deleteMany({
+        user: user._id,
+        type: "PASSWORD_RESET",
+    });
+
+    await OTP.create({
+        user: user._id,
+        target: normalizedEmail,
+        type: "PASSWORD_RESET",
+        otpHash,
+        expiresAt: new Date(
+            Date.now() + 10 * 60 * 1000
+        ),
+    });
+    const html = generateOtpHtml(otp);
+    await sendEmail(
+        normalizedEmail,
+        "Password Reset OTP",
+        `OTP: ${otp}`,
+        html
+    );
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {},
+            "Password reset OTP sent"
+        )
+    );
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+    const {
+        email,
+        otp,
+        newPassword,
+    } = req.body;
+
+    const normalizedEmail =
+        email.trim().toLowerCase();
+
+    const otpDoc = await OTP.findOne({
+        target: normalizedEmail,
+        type: "PASSWORD_RESET",
+    })
+
+    if (!otpDoc) {
+        throw new ApiError(
+            400,
+            "OTP not found"
+        );
+    }
+
+    if (
+        otpDoc.expiresAt <
+        new Date()
+    ) {
+        throw new ApiError(
+            400,
+            "OTP expired"
+        );
+    }
+
+    const isValid =
+        await bcrypt.compare(
+            otp,
+            otpDoc.otpHash
+        );
+
+    if (!isValid) {
+        throw new ApiError(
+            400,
+            "Invalid OTP"
+        );
+    }
+
+    const user = await User.findById(
+        otpDoc.user
+    );
+
+    user.passwordHash = newPassword;
+
+    await user.save();
+
+    await OTP.deleteMany({
+        user: user._id,
+        type: "PASSWORD_RESET",
+    });
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {},
+            "Password reset successful"
+        )
+    );
+});
+
 export {
     registerUser,
     verifyEmail,
@@ -422,4 +628,8 @@ export {
     loginUser,
     logoutUser,
     getMe,
+    updateUser,
+    forgotPassword,
+    resetPassword,
+    changePassword,
 }

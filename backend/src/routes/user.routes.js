@@ -5,7 +5,11 @@ import {
     verifyPhone, 
     loginUser, 
     logoutUser, 
-    getMe 
+    getMe, 
+    forgotPassword,
+    resetPassword,
+    updateUser,
+    changePassword
 } from "../controllers/user.controllers.js"; // Adjust the import path based on your file tree
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
@@ -16,9 +20,13 @@ userRouter.route("/register").post(registerUser);
 userRouter.route("/verify-email").post(verifyEmail);
 userRouter.route("/verify-phone").post(verifyPhone);
 userRouter.route("/login").post(loginUser);
+userRouter.route("/forgot-password").post(forgotPassword);
+userRouter.route("/reset-password").post(resetPassword);
 
 // --- Protected Routes (Requires valid JWT & Device Validation) ---
 userRouter.route("/logout").post(verifyJWT, logoutUser);
 userRouter.route("/me").get(verifyJWT, getMe);
+userRouter.route("/update-profile").patch(verifyJWT, updateUser);
+userRouter.route("/change-password").patch(verifyJWT, changePassword);
 
 export default userRouter;
