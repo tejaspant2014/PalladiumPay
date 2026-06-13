@@ -17,11 +17,12 @@ app.use(cookieParser());
 // routes
 
 import healthCheckRouter from "./routes/healthcheck.routes.js";
-
 app.use('/api/healthcheck', healthCheckRouter);
 
 import userRouter from "./routes/user.routes.js";
-
 app.use("/api/v1/users", userRouter);
+
+import walletRouter from "./routes/wallet.routes.js";
+app.use("/api/v1/wallet", walletRouter);
 
 export { app }      

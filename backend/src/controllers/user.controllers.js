@@ -9,6 +9,7 @@ import { OTP } from "../models/otp.model.js";
 import bcrypt from "bcrypt";
 import geoip from "geoip-lite";
 import twilio from "twilio";
+import { LoginAttempt } from "../models/loginAttempt.model.js";
 
 
 const registerUser = asyncHandler(async (req, res) => {
@@ -256,12 +257,12 @@ const verifyPhone = asyncHandler(async (req, res) => {
 
 const loginUser = asyncHandler(async (req, res) => {
     const {
-        email,
-        password,
-        fingerprint,
-        deviceName,
+    email,
+    password,
+    fingerprint,
+    deviceName,
     } = req.body;
-
+    
     if (
         !email?.trim() ||
         !password?.trim() ||
@@ -270,42 +271,56 @@ const loginUser = asyncHandler(async (req, res) => {
     ) {
         throw new ApiError(400, "All fields are required");
     }
-
+    
     const normalizedEmail = email.trim().toLowerCase();
-
+    
+    const ipAddress =
+        req.headers["x-forwarded-for"] ||
+        req.socket.remoteAddress;
+    
+    const geo = geoip.lookup(ipAddress);
+    
     const user = await User.findOne({
         email: normalizedEmail,
     });
-
+    
     if (!user) {
         throw new ApiError(404, "User not found");
     }
-
+    
+    let device = await Device.findOne({
+        user: user._id,
+        fingerprint: fingerprint.trim(),
+    });
+    
     const isPasswordCorrect =
         await user.isPasswordCorrect(password);
-
+    
     if (!isPasswordCorrect) {
+        await LoginAttempt.create({
+            user: user._id,
+            device: device?._id,
+            success: false,
+            ipAddress,
+        });
+    
         throw new ApiError(401, "Invalid credentials");
     }
-
+    
     if (!user.emailVerified || !user.phoneVerified) {
+        await LoginAttempt.create({
+            user: user._id,
+            device: device?._id,
+            success: false,
+            ipAddress,
+        });
+    
         throw new ApiError(
             403,
             "Please verify your email and phone first"
         );
     }
-
-    const ipAddress =
-        req.headers["x-forwarded-for"] ||
-        req.socket.remoteAddress;
-
-    const geo = geoip.lookup(ipAddress);
-
-    let device = await Device.findOne({
-        user: user._id,
-        fingerprint: fingerprint.trim(),
-    });
-
+    
     if (!device) {
         device = await Device.create({
             user: user._id,
@@ -317,33 +332,48 @@ const loginUser = asyncHandler(async (req, res) => {
             trusted: false,
         });
     }
-
+    
     device.lastSeen = new Date();
     device.lastLogin = new Date();
     device.loginCount += 1;
-
+    
+    if (
+        device.loginCount >= 3 &&
+        user.emailVerified &&
+        user.phoneVerified
+    ) {
+        device.trusted = true;
+    }
+    
     const accessToken =
         device.generateAccessToken();
-
+    
     const refreshToken =
         device.generateRefreshToken();
-
+    
     device.refreshToken = refreshToken;
-
+    
     await device.save({
         validateBeforeSave: false,
     });
-
+    
+    await LoginAttempt.create({
+        user: user._id,
+        device: device._id,
+        success: true,
+        ipAddress,
+    });
+    
     const loggedInUser = await User.findById(
         user._id
-    ).select("-passwordHash -refreshToken");
-
+    ).select("-passwordHash");
+    
     const cookieOptions = {
         httpOnly: true,
         secure: true,
         sameSite: "strict",
     };
-
+    
     return res
         .status(200)
         .cookie(
@@ -361,11 +391,14 @@ const loginUser = asyncHandler(async (req, res) => {
                 200,
                 {
                     user: loggedInUser,
+                    deviceTrusted: device.trusted,
                 },
                 "Login successful"
             )
         );
+    
 });
+    
 
 const logoutUser = asyncHandler(async (req, res) => {
     const device = await Device.findById(
@@ -429,13 +462,23 @@ const updateUser = asyncHandler(async (req, res) => {
     if(email?.trim()){
         updatedFields.email = email.trim().toLowerCase();
         updatedFields.emailVerified = false;
+        
     }
 
     if(phone?.trim()){
         updatedFields.phone = phone.trim();
         updatedFields.phoneVerified = false;
     }
-
+    if(email?.trim() || phone?.trim()){
+        await Device.updateMany(
+            { user: user._id },
+            {
+                trusted: false,
+                loginCount: 0,
+                refreshToken: null,
+            }
+        );
+    }
     if (Object.keys(updatedFields).length === 0) {
         throw new ApiError(
             400,
@@ -453,7 +496,6 @@ const updateUser = asyncHandler(async (req, res) => {
             runValidators: true,
         }
     ).select("-passwordHash");
-
     return res.status(200).json(
         new ApiResponse(
             200,
@@ -489,7 +531,14 @@ const changePassword = asyncHandler(async (req, res) => {
     }
 
     user.passwordHash = newPassword;
-
+    await Device.updateMany(
+        { user: user._id },
+        {
+            trusted: false,
+            loginCount: 0,
+            refreshToken: null,
+        }
+    );
     await user.save();
 
     return res.status(200).json(
@@ -605,6 +654,15 @@ const resetPassword = asyncHandler(async (req, res) => {
 
     user.passwordHash = newPassword;
 
+    await Device.updateMany(
+        { user: user._id },
+        {
+            trusted: false,
+            loginCount: 0,
+            refreshToken: null,
+        }
+    );
+    
     await user.save();
 
     await OTP.deleteMany({

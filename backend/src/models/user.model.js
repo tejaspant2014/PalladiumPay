@@ -54,18 +54,8 @@ const userSchema = new Schema(
         lastCalculatedAt: Date
     },
 
-    failedLoginAttempts: {
-      type: Number,
-      default: 0,
-    },
-
     lastLogin: {
       type: Date,
-    },
-
-    isLocked: {
-      type: Boolean,
-      default: false,
     },
   },
   {

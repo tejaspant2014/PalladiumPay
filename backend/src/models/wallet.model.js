@@ -17,6 +17,10 @@ const walletSchema = new Schema(
             type: String,
             default: "INR",
         },
+        isFrozen: {
+            type: Boolean,
+            default: false,
+        },
     },
     {
         timestamps: true,
