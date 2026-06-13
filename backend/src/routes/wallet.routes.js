@@ -5,6 +5,6 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 const walletRouter = Router();
 
 walletRouter.route("/create-wallet").post(verifyJWT, createWallet);
-walletRouter.route("/get-wallet").get(verifyJWT, getWallet);
+walletRouter.route("/").get(verifyJWT, getWallet);
 
 export default walletRouter;

@@ -58,16 +58,25 @@ const transactionSchema = new mongoose.Schema(
         default: "PENDING",
       },
   
-      balanceBefore: {
+      senderBalanceBefore: {
         type: Number,
         required: true,
       },
   
-      balanceAfter: {
+      senderBalanceAfter: {
+        type: Number,
+        required: true,
+      },
+
+      receiverBalanceBefore: {
         type: Number,
         required: true,
       },
   
+      receiverBalanceAfter: {
+        type: Number,
+        required: true,
+      },
       device: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Device",

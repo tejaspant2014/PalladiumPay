@@ -25,4 +25,6 @@ app.use("/api/v1/users", userRouter);
 import walletRouter from "./routes/wallet.routes.js";
 app.use("/api/v1/wallet", walletRouter);
 
+import transactionRouter from "./routes/transaction.routes.js";
+app.use("/api/v1/transaction", transactionRouter);
 export { app }      
