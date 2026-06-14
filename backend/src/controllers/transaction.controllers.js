@@ -14,6 +14,7 @@ const addMoney = asyncHandler(async(req, res) => {
         throw new ApiError(403, "Unauthorized Access!");
     }
 
+    if(!user.phoneVerified || !user.emailVerified) throw new ApiError(403, "Phone and Email Verification Required!");
     const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
     const numericAmount = Number(amount);
@@ -23,80 +24,98 @@ const addMoney = asyncHandler(async(req, res) => {
 
     if (!transactionId?.trim()) {
         throw new ApiError(400, "TransactionId required");
-      }
+    }
     
-      const device = req.device;
-      const geo = geoip.lookup(ipAddress);
+    const device = req.device;
+    const geo = geoip.lookup(ipAddress);
     
-      const session = await mongoose.startSession();
+    const session = await mongoose.startSession();
     
-      try {
-        session.startTransaction();
+    try {
+    session.startTransaction();
     
-        const wallet = await Wallet.findOne({user: user?._id}).session(session);
+    const wallet = await Wallet.findOne({user: user?._id}).session(session);
     
-        if (!wallet) {
-          throw new ApiError(404, "Wallet Not Found!");
-        }
+    if (!wallet) {
+        throw new ApiError(404, "Wallet Not Found!");
+    }
 
-        // idempotency check (inside session)
-        const existingTx = await Transaction.findOne({
-            transactionId,
-            sender: user._id
-        }).session(session);
+    // idempotency check (inside session)
+    const existingTx = await Transaction.findOne({
+        transactionId,
+        sender: user._id
+    }).session(session);
 
-        if (existingTx) {
-            await session.abortTransaction();
+    if (existingTx) {
+        await session.abortTransaction();
 
-            const latestWallet = await Wallet.findById(wallet._id);
+        const latestWallet = await Wallet.findById(wallet._id);
 
-            return res.status(200).json(new ApiResponse(200, latestWallet, "Already processed!"));
-        }
+        return res.status(200).json(new ApiResponse(200, latestWallet, "Already processed!"));
+    }
 
-        // create transaction
-        await Transaction.create(
-        [{
-            sender: user._id,
-            transactionId,
-            beneficiary: user._id,
-            amount: numericAmount,
-            transactionType: "DEPOSIT",
-            status: "PENDING",
-            senderBalanceBefore: wallet.balance,
-            senderBalanceAfter: wallet.balance + numericAmount,
-            receiverBalanceBefore: wallet.balance,
-            receiverBalanceAfter: wallet.balance + numericAmount,
-            device: device?._id,
-            ipAddress,
-            country: geo?.country,
-            location: {
-                latitude: geo?.ll?.[0],
-                longitude: geo?.ll?.[1],
-            },
-        }],
+    // create transaction
+    await Transaction.create(
+    [{
+        sender: user._id,
+        transactionId,
+        beneficiary: user._id,
+        amount: numericAmount,
+        transactionType: "DEPOSIT",
+        status: "PENDING",
+        senderBalanceBefore: wallet.balance,
+        senderBalanceAfter: wallet.balance + numericAmount,
+        receiverBalanceBefore: wallet.balance,
+        receiverBalanceAfter: wallet.balance + numericAmount,
+        device: device?._id,
+        ipAddress,
+        country: geo?.country,
+        location: {
+            latitude: geo?.ll?.[0],
+            longitude: geo?.ll?.[1],
+        },
+    }],
+    { session }
+    );
+
+    // update wallet atomically
+    const updatedWallet = await Wallet.findOneAndUpdate(
+    { _id: wallet._id },
+    { $inc: { balance: numericAmount } },
+    { new: true, session }
+    );
+
+    // mark transaction success
+    await Transaction.updateOne(
+        { transactionId },
+        { $set: { status: "SUCCESS" } },
         { session }
-        );
+    );
 
-        // update wallet atomically
-        const updatedWallet = await Wallet.findOneAndUpdate(
-        { _id: wallet._id },
-        { $inc: { balance: numericAmount } },
-        { new: true, session }
-        );
-
-        // mark transaction success
-        await Transaction.updateOne(
-            { transactionId },
-            { $set: { status: "SUCCESS" } },
-            { session }
-        );
-
-        await session.commitTransaction();
+    await session.commitTransaction();
         
 
-        return res.status(200).json(new ApiResponse(200, updatedWallet, "Amount Added Successfully!"));
+    return res.status(200).json(new ApiResponse(200, updatedWallet, "Amount Added Successfully!"));
 
     } catch (error) {
+        try {
+            await Transaction.updateOne(
+              {
+                transactionId,
+                sender: user._id,
+                status: "PENDING"
+              },
+              {
+                $set: {
+                  status: "FAILED"
+                }
+              },
+              { session }
+            );
+          } catch (e) {
+            // ignore secondary failure
+          }
+        
         await session.abortTransaction();
         throw error;
     } finally {
@@ -107,6 +126,7 @@ const addMoney = asyncHandler(async(req, res) => {
 const transferMoney = asyncHandler(async(req, res) => {
     const {transactionId, amount, receiverEmail } = req.body;
     const user = req.user;
+    if(!user.phoneVerified || !user.emailVerified) throw new ApiError(403, "Phone and Email Verification Required!");
     const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
     if(!user){
         throw new ApiError(403, "Unauthorized Access!");
@@ -143,6 +163,8 @@ const transferMoney = asyncHandler(async(req, res) => {
                 "Cannot transfer to yourself"
             );
         }
+
+        if(!receiver.phoneVerified || !receiver.emailVerified) throw new ApiError(403, "Beneficiary Not Verified!");
         const senderWallet = await Wallet.findOne({user: user?._id}).session(session);
         const receiverWallet = await Wallet.findOne({user: receiver?._id}).session(session);
         if(!senderWallet){
@@ -223,6 +245,24 @@ const transferMoney = asyncHandler(async(req, res) => {
         return res.status(200).json(new ApiResponse(200, {"updatedSenderWallet": updatedSenderWallet, "updatedreceiverWallet": updatedreceiverWallet}, "Transfer Completed Successfully!"));
 
     } catch (error) {
+        try {
+            await Transaction.updateOne(
+              {
+                transactionId,
+                sender: user._id,
+                status: "PENDING"
+              },
+              {
+                $set: {
+                  status: "FAILED"
+                }
+              },
+              { session }
+            );
+          } catch (e) {
+            // ignore secondary failure
+          }
+        
         await session.abortTransaction();
         throw error;
     } finally{
@@ -304,8 +344,8 @@ const getTransactionById = asyncHandler(async(req, res) => {
     throw new ApiError(404, "Transaction not found");
   }
 
-  const isSender = tx.sender.toString() === userId.toString();
-  const isReceiver = tx.beneficiary.toString() === userId.toString();
+  const isSender = tx.sender.toString() === user._id.toString();
+  const isReceiver = tx.beneficiary.toString() === user._id.toString();
   if (!isSender && !isReceiver) {
     throw new ApiError(403, "Access denied");
   }
@@ -329,7 +369,7 @@ const getTransactionById = asyncHandler(async(req, res) => {
         status: tx.status,
         createdAt: tx.createdAt
       };
-    return res.status(200).json(200, response, "Transaction Fetched Successfully!");
+    return res.status(200).json( new ApiResponse(200, response, "Transaction Fetched Successfully!"));
 });
 
 export {
