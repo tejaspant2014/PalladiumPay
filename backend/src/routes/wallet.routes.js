@@ -1,4 +1,4 @@
-import { Router } from "express"; 
+import { Router } from "express";
 import { createWallet, getWallet } from "../controllers/wallet.controllers.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 

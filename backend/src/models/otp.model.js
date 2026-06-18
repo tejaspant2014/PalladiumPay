@@ -1,4 +1,4 @@
-import mongoose, {Schema} from "mongoose";
+import mongoose, { Schema } from "mongoose";
 
 const otpSchema = new Schema(
   {
@@ -32,7 +32,7 @@ const otpSchema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 export const OTP = mongoose.model("OTP", otpSchema);

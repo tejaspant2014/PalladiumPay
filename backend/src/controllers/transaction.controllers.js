@@ -6,299 +6,450 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import mongoose from "mongoose";
 import geoip from "geoip-lite";
 import { User } from "../models/user.model.js";
+import { generateFraudFeatures } from "../services/featureGeneration.js";
+import { getFraudProbability } from "../services/fraudDetection.service.js";
+import { OTP } from "../models/otp.model.js";
+import { generateOtp } from "../utils/OtpGenerator.js";
+import twilio from "twilio";
+import bcrypt from "bcrypt";
+import { executeTransfer } from "../services/executeTransfer.js";
 
-const addMoney = asyncHandler(async(req, res) => {
-    const { amount, transactionId } = req.body;
-    const user = req.user;
-    if(!user){
-        throw new ApiError(403, "Unauthorized Access!");
-    }
+const addMoney = asyncHandler(async (req, res) => {
+  const { amount, transactionId } = req.body;
+  const user = req.user;
+  if (!user) {
+    throw new ApiError(403, "Unauthorized Access!");
+  }
 
-    if(!user.phoneVerified || !user.emailVerified) throw new ApiError(403, "Phone and Email Verification Required!");
-    const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  if (!user.phoneVerified || !user.emailVerified)
+    throw new ApiError(403, "Phone and Email Verification Required!");
+  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
-    const numericAmount = Number(amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-        throw new ApiError(400, "Amount must be greater than 0");
-    }
+  const numericAmount = Number(amount);
+  if (isNaN(numericAmount) || numericAmount <= 0) {
+    throw new ApiError(400, "Amount must be greater than 0");
+  }
 
-    if (!transactionId?.trim()) {
-        throw new ApiError(400, "TransactionId required");
-    }
-    
-    const device = req.device;
-    const geo = geoip.lookup(ipAddress);
-    
-    const session = await mongoose.startSession();
-    
-    try {
+  if (!transactionId?.trim()) {
+    throw new ApiError(400, "TransactionId required");
+  }
+
+  const device = req.device;
+  const geo = geoip.lookup(ipAddress);
+
+  const session = await mongoose.startSession();
+
+  try {
     session.startTransaction();
-    
-    const wallet = await Wallet.findOne({user: user?._id}).session(session);
-    
+
+    const wallet = await Wallet.findOne({ user: user?._id }).session(session);
+
     if (!wallet) {
-        throw new ApiError(404, "Wallet Not Found!");
+      throw new ApiError(404, "Wallet Not Found!");
     }
 
     // idempotency check (inside session)
     const existingTx = await Transaction.findOne({
-        transactionId,
-        sender: user._id
+      transactionId,
+      sender: user._id,
     }).session(session);
 
     if (existingTx) {
-        await session.abortTransaction();
+      await session.abortTransaction();
 
-        const latestWallet = await Wallet.findById(wallet._id);
+      const latestWallet = await Wallet.findById(wallet._id);
 
-        return res.status(200).json(new ApiResponse(200, latestWallet, "Already processed!"));
+      return res
+        .status(200)
+        .json(new ApiResponse(200, latestWallet, "Already processed!"));
     }
 
     // create transaction
     await Transaction.create(
-    [{
-        sender: user._id,
-        transactionId,
-        beneficiary: user._id,
-        amount: numericAmount,
-        transactionType: "DEPOSIT",
-        status: "PENDING",
-        senderBalanceBefore: wallet.balance,
-        senderBalanceAfter: wallet.balance + numericAmount,
-        receiverBalanceBefore: wallet.balance,
-        receiverBalanceAfter: wallet.balance + numericAmount,
-        device: device?._id,
-        ipAddress,
-        country: geo?.country,
-        location: {
+      [
+        {
+          sender: user._id,
+          transactionId,
+          beneficiary: user._id,
+          amount: numericAmount,
+          transactionType: "DEPOSIT",
+          status: "PENDING",
+          senderBalanceBefore: wallet.balance,
+          senderBalanceAfter: wallet.balance + numericAmount,
+          receiverBalanceBefore: wallet.balance,
+          receiverBalanceAfter: wallet.balance + numericAmount,
+          device: device?._id,
+          ipAddress,
+          country: geo?.country,
+          location: {
             latitude: geo?.ll?.[0],
             longitude: geo?.ll?.[1],
+          },
         },
-    }],
-    { session }
+      ],
+      { session },
     );
 
     // update wallet atomically
     const updatedWallet = await Wallet.findOneAndUpdate(
-    { _id: wallet._id },
-    { $inc: { balance: numericAmount } },
-    { new: true, session }
+      { _id: wallet._id },
+      { $inc: { balance: numericAmount } },
+      { new: true, session },
     );
 
     // mark transaction success
     await Transaction.updateOne(
-        { transactionId },
-        { $set: { status: "SUCCESS" } },
-        { session }
+      { transactionId },
+      { $set: { status: "SUCCESS" } },
+      { session },
     );
 
     await session.commitTransaction();
-        
 
-    return res.status(200).json(new ApiResponse(200, updatedWallet, "Amount Added Successfully!"));
-
-    } catch (error) {
-        try {
-            await Transaction.updateOne(
-              {
-                transactionId,
-                sender: user._id,
-                status: "PENDING"
-              },
-              {
-                $set: {
-                  status: "FAILED"
-                }
-              },
-              { session }
-            );
-          } catch (e) {
-            // ignore secondary failure
-          }
-        
-        await session.abortTransaction();
-        throw error;
-    } finally {
-        await session.endSession();
-    }
-});
-
-const transferMoney = asyncHandler(async(req, res) => {
-    const {transactionId, amount, receiverEmail } = req.body;
-    const user = req.user;
-    if(!user.phoneVerified || !user.emailVerified) throw new ApiError(403, "Phone and Email Verification Required!");
-    const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    if(!user){
-        throw new ApiError(403, "Unauthorized Access!");
-    }
-
-    const numericAmount = Number(amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-        throw new ApiError(400, "Amount must be greater than 0");
-    }
-
-    if (!transactionId?.trim()) {
-        throw new ApiError(400, "TransactionId required");
-    }
-
-    if(!receiverEmail?.trim()){
-        throw new ApiError(400, "receiver Email Address required!");
-    }
-    const device = req.device;
-    const geo = geoip.lookup(ipAddress);
-    
-
-    const session = await mongoose.startSession();
+    return res
+      .status(200)
+      .json(new ApiResponse(200, updatedWallet, "Amount Added Successfully!"));
+  } catch (error) {
     try {
-        session.startTransaction();
-        const receiver = await User.findOne({email: receiverEmail.trim().toLowerCase()});
-    
-        if(!receiver){
-            throw new ApiError(404, "No receiver Found!");
-        }
-
-        if (receiver._id.toString() === user._id.toString()) {
-            throw new ApiError(
-                400,
-                "Cannot transfer to yourself"
-            );
-        }
-
-        if(!receiver.phoneVerified || !receiver.emailVerified) throw new ApiError(403, "Beneficiary Not Verified!");
-        const senderWallet = await Wallet.findOne({user: user?._id}).session(session);
-        const receiverWallet = await Wallet.findOne({user: receiver?._id}).session(session);
-        if(!senderWallet){
-            throw new ApiError(404, "Wallet not found!")
-        }
-        if(!receiverWallet){
-            throw new ApiError(404, "receiver Wallet Not Found!");
-        }
-
-        const existingTx = await Transaction.findOne({
-            transactionId,
-            sender: user._id,
-            beneficiary: receiver._id,
-        }).session(session);
-
-        if (existingTx) {
-            await session.abortTransaction();
-
-            const latestSenderWallet = await Wallet.findById(senderWallet._id);
-            const latestreceiverWallet = await Wallet.findById(receiverWallet._id);
-            return res.status(200).json(new ApiResponse(200, {"senderWallet": latestSenderWallet, "receiverWallet": latestreceiverWallet}, "Already processed!"));
-        }
-        await Transaction.create(
-            [{
-                sender: user._id,
-                transactionId,
-                beneficiary: receiver._id,
-                amount: numericAmount,
-                transactionType: "TRANSFER",
-                status: "PENDING",
-                senderBalanceBefore: senderWallet.balance,
-                senderBalanceAfter: senderWallet.balance - numericAmount,
-                receiverBalanceBefore: receiverWallet.balance,
-                receiverBalanceAfter: receiverWallet.balance + numericAmount,
-                device: device?._id,
-                ipAddress,
-                country: geo?.country,
-                location: {
-                    latitude: geo?.ll?.[0],
-                    longitude: geo?.ll?.[1],
-                },
-            }],
-            { session }
-        );
-        const updatedSenderWallet = await Wallet.findOneAndUpdate(
-            {
-                _id: senderWallet._id,
-                balance: { $gte: numericAmount }
-            },
-            {
-                $inc: { balance: -numericAmount }
-            },
-            {
-                new: true,
-                session
-            }
-        );
-        if (!updatedSenderWallet) {
-            throw new ApiError(
-                400,
-                "Insufficient balance"
-            );
-        }
-        const updatedreceiverWallet = await Wallet.findOneAndUpdate(
-            { _id: receiverWallet._id },
-            { $inc: { balance: numericAmount } },
-            { new: true, session }
-        );
-        await Transaction.updateOne(
-            { transactionId, sender: user._id, beneficiary: receiver._id },
-            { $set: { status: "SUCCESS" } },
-            { session }
-        );
-
-        await session.commitTransaction();
-        
-
-        return res.status(200).json(new ApiResponse(200, {"updatedSenderWallet": updatedSenderWallet, "updatedreceiverWallet": updatedreceiverWallet}, "Transfer Completed Successfully!"));
-
-    } catch (error) {
-        try {
-            await Transaction.updateOne(
-              {
-                transactionId,
-                sender: user._id,
-                status: "PENDING"
-              },
-              {
-                $set: {
-                  status: "FAILED"
-                }
-              },
-              { session }
-            );
-          } catch (e) {
-            // ignore secondary failure
-          }
-        
-        await session.abortTransaction();
-        throw error;
-    } finally{
-        await session.endSession();
+      await Transaction.updateOne(
+        {
+          transactionId,
+          sender: user._id,
+          status: "PENDING",
+        },
+        {
+          $set: {
+            status: "FAILED",
+          },
+        },
+        { session },
+      );
+    } catch (e) {
+      // ignore secondary failure
     }
+
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    await session.endSession();
+  }
 });
 
-const getTransactionHistory = asyncHandler(async(req, res) => {
-    const userId = req.user._id;
-    if(!userId) throw new ApiError(403, "Unauthorized Access!");
-    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-    const cursor = req.query.cursor;
+const initiateTransfer = asyncHandler(async (req, res) => {
+  const { transactionId, amount, receiverEmail } = req.body;
+  const user = req.user;
+  if (!user.phoneVerified || !user.emailVerified)
+    throw new ApiError(403, "Phone and Email Verification Required!");
+  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  if (!user) {
+    throw new ApiError(403, "Unauthorized Access!");
+  }
 
-    const query = {
-        $or: [
-        { sender: userId },
-        { beneficiary: userId }
-        ]
-    };
+  const numericAmount = Number(amount);
+  if (isNaN(numericAmount) || numericAmount <= 0) {
+    throw new ApiError(400, "Amount must be greater than 0");
+  }
 
-    if (cursor) {
-        query._id = { $lt: cursor };
+  if (!transactionId?.trim()) {
+    throw new ApiError(400, "TransactionId required");
+  }
+
+  if (!receiverEmail?.trim()) {
+    throw new ApiError(400, "receiver Email Address required!");
+  }
+  const device = req.device;
+  const geo = geoip.lookup(ipAddress);
+
+  const receiver = await User.findOne({
+    email: receiverEmail.trim().toLowerCase(),
+  });
+
+  if (!receiver) {
+    throw new ApiError(404, "No receiver Found!");
+  }
+
+  if (receiver._id.toString() === user._id.toString()) {
+    throw new ApiError(400, "Cannot transfer to yourself");
+  }
+
+  if (!receiver.phoneVerified || !receiver.emailVerified)
+    throw new ApiError(403, "Beneficiary Not Verified!");
+  const senderWallet = await Wallet.findOne({ user: user?._id });
+  const receiverWallet = await Wallet.findOne({ user: receiver?._id });
+  if (!senderWallet) {
+    throw new ApiError(404, "Wallet not found!");
+  }
+  if (!receiverWallet) {
+    throw new ApiError(404, "receiver Wallet Not Found!");
+  }
+
+  const existingTx = await Transaction.findOne({
+    transactionId,
+    sender: user._id,
+    beneficiary: receiver._id,
+  });
+
+  if (existingTx) {
+    if (existingTx.status === "SUCCESS") {
+      return res
+        .status(200)
+        .json(
+          new ApiResponse(200, existingTx, "Transaction already processed"),
+        );
     }
 
-    const transactions = await Transaction.find(query)
-        .sort({ createdAt: -1 ,_id: -1 })
-        .limit(limit + 1); // fetch one extra to check next page
-
-    let hasNextPage = false;
-
-    if (transactions.length > limit) {
-        hasNextPage = true;
-        transactions.pop();
+    if (existingTx.status === "BLOCKED") {
+      throw new ApiError(400, "Transaction blocked");
     }
 
-    const formatted = transactions.map(tx => {
+    if (existingTx.status === "PENDING") {
+      // APPROVED but execution never happened
+      if (existingTx.fraudDecision === "APPROVED") {
+        const response = await executeTransfer(existingTx.transactionId);
+
+        return res
+          .status(200)
+          .json(
+            new ApiResponse(
+              200,
+              response,
+              "Recovered and completed transaction",
+            ),
+          );
+      }
+
+      // Waiting for OTP
+      if (existingTx.fraudDecision === "OTP_REQUIRED") {
+        const client = new twilio(
+          process.env.TWILIO_S_ID,
+          process.env.TWILIO_AUTH_TOKEN,
+        );
+        const phoneOTP = generateOtp();
+        const phoneOtpHash = await bcrypt.hash(phoneOTP, 10);
+
+        await OTP.deleteMany({
+          user: user._id,
+          type: "PHONE",
+        });
+
+        await OTP.create({
+          target: user.phone,
+          user: user._id,
+          type: "PHONE",
+          otpHash: phoneOtpHash,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        });
+
+        try {
+          const result = await client.messages.create({
+            body: `Your OTP Code for Payment MFA is ${phoneOTP}`,
+            from: process.env.TWILIO_PHONE,
+            to: user.phone,
+          });
+        } catch (error) {
+          throw new ApiError(500, `SMS Delivery Failed: ${error.message}`);
+        }
+        return res
+          .status(200)
+          .json(new ApiResponse(200, existingTx, "OTP verification pending"));
+      }
+
+      // Permanently blocked
+      if (existingTx.fraudDecision === "BLOCKED") {
+        throw new ApiError(400, "Transaction blocked");
+      }
+    }
+  }
+  if (senderWallet.balance < numericAmount) {
+    throw new ApiError(400, "Insufficient balance");
+  }
+
+  const txn = await Transaction.create({
+    sender: user._id,
+    transactionId,
+    beneficiary: receiver._id,
+    amount: numericAmount,
+    transactionType: "TRANSFER",
+    status: "PENDING",
+    senderBalanceBefore: senderWallet.balance,
+    senderBalanceAfter: senderWallet.balance - numericAmount,
+    receiverBalanceBefore: receiverWallet.balance,
+    receiverBalanceAfter: receiverWallet.balance + numericAmount,
+    device: device?._id,
+    ipAddress,
+    country: geo?.country,
+    location: {
+      latitude: geo?.ll?.[0],
+      longitude: geo?.ll?.[1],
+    },
+  });
+
+  const features = await generateFraudFeatures({
+    user,
+    receiver,
+    device,
+    senderWallet,
+    amount: numericAmount,
+  });
+  if (!features) throw new ApiError(500, "Feature Generation Failed!");
+
+  const fraudScore = await getFraudProbability(features);
+  if (!fraudScore) throw new ApiError(500, "Fraud Probability Not Generated!");
+  txn.riskScore = fraudScore.fraud_probability;
+
+  if (fraudScore.fraud_probability < 0.05 && numericAmount < 50000) {
+    txn.fraudDecision = "APPROVED";
+    txn.otpRequired = false;
+    await txn.save();
+    const response = await executeTransfer(transactionId);
+    return res
+      .status(200)
+      .json(new ApiResponse(200, response, "Transfer Completed Successfully!"));
+  } else if (
+    (fraudScore.fraud_probability >= 0.05 &&
+    fraudScore.fraud_probability < 0.5)||
+    numericAmount > 50000
+  ) {
+    txn.fraudDecision = "OTP_REQUIRED";
+    txn.otpRequired = true;
+    await txn.save();
+
+    const client = new twilio(
+      process.env.TWILIO_S_ID,
+      process.env.TWILIO_AUTH_TOKEN,
+    );
+    const phoneOTP = generateOtp();
+    const phoneOtpHash = await bcrypt.hash(phoneOTP, 10);
+
+    await OTP.deleteMany({
+      user: user._id,
+      type: "PHONE",
+    });
+
+    await OTP.create({
+      target: user.phone,
+      user: user._id,
+      type: "PHONE",
+      otpHash: phoneOtpHash,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    try {
+      const result = await client.messages.create({
+        body: `Your OTP Code for Payment MFA is ${phoneOTP}`,
+        from: process.env.TWILIO_PHONE,
+        to: user.phone,
+      });
+    } catch (error) {
+      throw new ApiError(500, `SMS Delivery Failed: ${error.message}`);
+    }
+  } else {
+    txn.fraudDecision = "BLOCKED";
+    txn.status = "BLOCKED";
+    await txn.save();
+    throw new ApiError(400, "Transfer Blocked!");
+  }
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        txn,
+        "Transaction Initiated Successfully OTP Verification Required!",
+      ),
+    );
+});
+
+const verifyOTP = asyncHandler(async (req, res) => {
+  const { transactionId } = req.params;
+
+  const { otp, phone } = req.body;
+  const user = req.user;
+
+  if (!otp?.trim() || !phone?.trim()) {
+    throw new ApiError(400, "All Fields Are Required!");
+  }
+
+  const normalizedPhone = phone.trim();
+
+  if (!user) throw new ApiError(403, "Unauthorized Access!");
+
+  const txn = await Transaction.findOne({
+    sender: user._id,
+    transactionId,
+  });
+
+  if (!txn) {
+    throw new ApiError(404, "Transaction Not Found!");
+  }
+
+  if (!txn.otpRequired || txn.otpVerified) {
+    return res
+      .status(200)
+      .json(new ApiResponse(200, {}, "No Verification Needed!"));
+  }
+  if (txn.status === "SUCCESS") {
+    throw new ApiError(400, "Transaction already completed");
+  }
+
+  const otpDoc = await OTP.findOne({
+    user: user._id,
+    target: normalizedPhone,
+    type: "PHONE",
+  });
+
+  if (!otpDoc) {
+    throw new ApiError(400, "OTP not found");
+  }
+
+  if (otpDoc.expiresAt < new Date()) {
+    throw new ApiError(400, "OTP has expired");
+  }
+
+  const isValid = await bcrypt.compare(otp, otpDoc.otpHash);
+
+  if (!isValid) {
+    throw new ApiError(400, "Invalid OTP");
+  }
+  txn.otpVerified = true;
+  await txn.save();
+
+  await OTP.deleteMany({
+    user: otpDoc.user,
+    type: "PHONE",
+  });
+  const response = await executeTransfer(transactionId);
+  return res
+    .status(200)
+    .json(new ApiResponse(200, response, "Transfer Completed!"));
+});
+
+const getTransactionHistory = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  if (!userId) throw new ApiError(403, "Unauthorized Access!");
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  const cursor = req.query.cursor;
+
+  const query = {
+    $or: [{ sender: userId }, { beneficiary: userId }],
+  };
+
+  if (cursor) {
+    query._id = { $lt: cursor };
+  }
+
+  const transactions = await Transaction.find(query)
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(limit + 1); // fetch one extra to check next page
+
+  let hasNextPage = false;
+
+  if (transactions.length > limit) {
+    hasNextPage = true;
+    transactions.pop();
+  }
+
+  const formatted = transactions.map((tx) => {
     const isSender = tx.sender.toString() === userId.toString();
 
     if (isSender) {
@@ -310,7 +461,7 @@ const getTransactionHistory = asyncHandler(async(req, res) => {
         balanceAfter: tx.senderBalanceAfter,
         counterparty: tx.beneficiary,
         status: tx.status,
-        createdAt: tx.createdAt
+        createdAt: tx.createdAt,
       };
     }
 
@@ -322,21 +473,29 @@ const getTransactionHistory = asyncHandler(async(req, res) => {
       balanceAfter: tx.receiverBalanceAfter,
       counterparty: tx.sender,
       status: tx.status,
-      createdAt: tx.createdAt
+      createdAt: tx.createdAt,
     };
   });
 
-  return res.status(200).json(new ApiResponse(200,{
-    success: true,
-    transactions: formatted,
-    nextCursor: hasNextPage ? transactions[transactions.length - 1]._id : null
-  }, "Transactions fetched successfully!"));
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        success: true,
+        transactions: formatted,
+        nextCursor: hasNextPage
+          ? transactions[transactions.length - 1]._id
+          : null,
+      },
+      "Transactions fetched successfully!",
+    ),
+  );
 });
 
-const getTransactionById = asyncHandler(async(req, res) => {
-    const user = req.user;
-    if(!user) throw new ApiError(403, "Unauthorized Access!");
-    const { transactionId } = req.params;
+const getTransactionById = asyncHandler(async (req, res) => {
+  const user = req.user;
+  if (!user) throw new ApiError(403, "Unauthorized Access!");
+  const { transactionId } = req.params;
 
   const tx = await Transaction.findOne({ transactionId });
 
@@ -358,7 +517,7 @@ const getTransactionById = asyncHandler(async(req, res) => {
         balanceAfter: tx.senderBalanceAfter,
         counterparty: tx.beneficiary,
         status: tx.status,
-        createdAt: tx.createdAt
+        createdAt: tx.createdAt,
       }
     : {
         type: "RECEIVED",
@@ -367,14 +526,17 @@ const getTransactionById = asyncHandler(async(req, res) => {
         balanceAfter: tx.receiverBalanceAfter,
         counterparty: tx.sender,
         status: tx.status,
-        createdAt: tx.createdAt
+        createdAt: tx.createdAt,
       };
-    return res.status(200).json( new ApiResponse(200, response, "Transaction Fetched Successfully!"));
+  return res
+    .status(200)
+    .json(new ApiResponse(200, response, "Transaction Fetched Successfully!"));
 });
 
 export {
-    addMoney,
-    transferMoney,
-    getTransactionHistory,
-    getTransactionById,
-}
+  addMoney,
+  verifyOTP,
+  initiateTransfer,
+  getTransactionHistory,
+  getTransactionById,
+};

@@ -1,4 +1,4 @@
-import mongoose, {Schema} from "mongoose";
+import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcrypt";
 const userSchema = new Schema(
   {
@@ -42,16 +42,15 @@ const userSchema = new Schema(
       default: "user",
     },
 
-
     homeCountry: {
       type: String,
       default: "IN",
     },
 
     usualLocation: {
-        latitude: Number,
-        longitude: Number,
-        lastCalculatedAt: Date
+      latitude: Number,
+      longitude: Number,
+      lastCalculatedAt: Date,
     },
 
     lastLogin: {
@@ -60,19 +59,18 @@ const userSchema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 userSchema.pre("save", async function () {
-    if(!this.isModified("passwordHash")){
-        return ;
-    }
-    this.passwordHash = await bcrypt.hash(this.passwordHash,10);
-    
+  if (!this.isModified("passwordHash")) {
+    return;
+  }
+  this.passwordHash = await bcrypt.hash(this.passwordHash, 10);
 });
 
-userSchema.methods.isPasswordCorrect = async function (password){
-    return await bcrypt.compare(password, this.passwordHash);
-}
+userSchema.methods.isPasswordCorrect = async function (password) {
+  return await bcrypt.compare(password, this.passwordHash);
+};
 
 export const User = mongoose.model("User", userSchema);

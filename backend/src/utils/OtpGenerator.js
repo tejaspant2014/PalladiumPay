@@ -1,9 +1,9 @@
 export const generateOtp = () => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-}
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
 
 export const generateOtpHtml = (otp) => {
-    return `
+  return `
       <div style="font-family: Arial, sans-serif; padding: 20px; color: #111;">
         <h2 style="color: #1a73e8;">Palladium Pay Email Verification</h2>
   
@@ -27,5 +27,4 @@ export const generateOtpHtml = (otp) => {
         <p>If you did not request this, please ignore this email.</p>
       </div>
     `;
-  };
-  
+};

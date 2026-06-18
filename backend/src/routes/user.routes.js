@@ -1,15 +1,15 @@
 import { Router } from "express";
-import { 
-    registerUser, 
-    verifyEmail, 
-    verifyPhone, 
-    loginUser, 
-    logoutUser, 
-    getMe, 
-    forgotPassword,
-    resetPassword,
-    updateUser,
-    changePassword
+import {
+  registerUser,
+  verifyEmail,
+  verifyPhone,
+  loginUser,
+  logoutUser,
+  getMe,
+  forgotPassword,
+  resetPassword,
+  updateUser,
+  changePassword,
 } from "../controllers/user.controllers.js"; // Adjust the import path based on your file tree
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
