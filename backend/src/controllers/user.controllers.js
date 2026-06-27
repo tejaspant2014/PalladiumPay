@@ -11,10 +11,11 @@ import geoip from "geoip-lite";
 import twilio from "twilio";
 import { LoginAttempt } from "../models/loginAttempt.model.js";
 
+import mongoose from "mongoose";
+
 const registerUser = asyncHandler(async (req, res) => {
   const { name, email, phone, password, homeCountry, fingerprint, deviceName } =
     req.body;
-
   const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
   if (
@@ -32,106 +33,135 @@ const registerUser = asyncHandler(async (req, res) => {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedPhone = phone.trim();
 
-  const existingUser = await User.findOne({
-    $or: [{ email: normalizedEmail }, { phone: normalizedPhone }],
-  });
-
-  if (existingUser) {
-    throw new ApiError(409, "User already exists!");
-  }
-
-  const user = await User.create({
-    name: name.trim(),
-    email: normalizedEmail,
-    phone: normalizedPhone,
-    passwordHash: password,
-    homeCountry: homeCountry.trim().toUpperCase(),
-  });
-
-  const geo = geoip.lookup(ipAddress);
-
-  const device = await Device.create({
-    user: user._id,
-    fingerprint: fingerprint.trim(),
-    deviceName: deviceName.trim().toLowerCase(),
-    ipAddress,
-    country: geo?.country,
-    city: geo?.city,
-    lastSeen: new Date(),
-    lastLogin: new Date(),
-  });
-
-  const otp = generateOtp();
-  const otpHash = await bcrypt.hash(otp, 10);
-
-  await OTP.deleteMany({
-    user: user._id,
-    type: "EMAIL",
-  });
-
-  await OTP.create({
-    target: normalizedEmail,
-    user: user._id,
-    type: "EMAIL",
-    otpHash,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-  });
-
-  const html = generateOtpHtml(otp);
-
-  await sendEmail(
-    normalizedEmail,
-    "OTP Verification",
-    `Your OTP Code is ${otp}`,
-    html,
-  );
-
-  const client = new twilio(
-    process.env.TWILIO_S_ID,
-    process.env.TWILIO_AUTH_TOKEN,
-  );
-  const phoneOTP = generateOtp();
-  const phoneOtpHash = await bcrypt.hash(phoneOTP, 10);
-
-  await OTP.deleteMany({
-    user: user._id,
-    type: "PHONE",
-  });
-
-  await OTP.create({
-    target: phone.trim(),
-    user: user._id,
-    type: "PHONE",
-    otpHash: phoneOtpHash,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-  });
+  // 1. Start the MongoDB Session
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
   try {
-    const result = await client.messages.create({
+    const existingUser = await User.findOne({
+      $or: [{ email: normalizedEmail }, { phone: normalizedPhone }],
+    }).session(session); // Pass session to the query
+
+    if (existingUser) {
+      throw new ApiError(409, "User already exists!");
+    }
+
+    // 2. Create the User within the transaction
+    const [user] = await User.create(
+      [
+        {
+          name: name.trim(),
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          passwordHash: password,
+          homeCountry: homeCountry.trim().toUpperCase(),
+        },
+      ],
+      { session } // Pass session configuration
+    );
+
+    const geo = geoip.lookup(ipAddress);
+
+    // 3. Create the Device within the transaction
+    await Device.create(
+      [
+        {
+          user: user._id,
+          fingerprint: fingerprint.trim(),
+          deviceName: deviceName.trim().toLowerCase(),
+          ipAddress,
+          country: geo?.country,
+          city: geo?.city,
+          lastSeen: new Date(),
+          lastLogin: new Date(),
+        },
+      ],
+      { session }
+    );
+
+    // Email OTP setup
+    const otp = generateOtp();
+    const otpHash = await bcrypt.hash(otp, 10);
+
+    await OTP.deleteMany({ user: user._id, type: "EMAIL" }).session(session);
+    await OTP.create(
+      [
+        {
+          target: normalizedEmail,
+          user: user._id,
+          type: "EMAIL",
+          otpHash,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      ],
+      { session }
+    );
+
+    // Phone OTP setup
+    const client = new twilio(process.env.TWILIO_S_ID, process.env.TWILIO_AUTH_TOKEN);
+    const phoneOTP = generateOtp();
+    const phoneOtpHash = await bcrypt.hash(phoneOTP, 10);
+
+    await OTP.deleteMany({ user: user._id, type: "PHONE" }).session(session);
+    await OTP.create(
+      [
+        {
+          target: normalizedPhone,
+          user: user._id,
+          type: "PHONE",
+          otpHash: phoneOtpHash,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      ],
+      { session }
+    );
+
+    // 4. Handle external Side-Effects (SMS & Email) before committing
+    // If Twilio fails, the catch block catches it and aborts the transaction.
+    await client.messages.create({
       body: `Your OTP Code is ${phoneOTP}`,
       from: process.env.TWILIO_PHONE,
       to: user.phone,
     });
-  } catch (error) {
-    await User.findByIdAndDelete(user._id);
-    await Device.findByIdAndDelete(device._id);
-    await OTP.deleteMany({ user: user._id });
-    throw new ApiError(500, `SMS Delivery Failed: ${error.message}`);
-  }
 
-  const createdUser = await User.findById(user._id).select(
-    "-passwordHash -refreshToken",
-  );
-  return res.status(201).json(
-    new ApiResponse(
-      201,
-      {
-        user: createdUser,
-      },
-      "User registered successfully. Please verify your email.",
-    ),
-  );
+    const html = generateOtpHtml(otp);
+    await sendEmail(
+      normalizedEmail,
+      "OTP Verification",
+      `Your OTP Code is ${otp}`,
+      html
+    );
+
+    // 5. Commit the transaction if everything succeeded
+    await session.commitTransaction();
+    
+    // Fetch the updated user outside the transaction isolation if needed, or just format the local object
+    const createdUser = await User.findById(user._id)
+      .select("-passwordHash -refreshToken");
+
+    return res.status(201).json(
+      new ApiResponse(
+        201,
+        { user: createdUser },
+        "User registered successfully. Please verify your email."
+      )
+    );
+
+  } catch (error) {
+    // 6. Rollback all database modifications if any error occurs
+    await session.abortTransaction();
+    
+    // Distinguish between custom API errors and unexpected issues
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(500, error.message || "Registration failed. Transaction aborted.");
+  } finally {
+    // 7. Clean up the session
+    await session.endSession();
+  }
 });
+
 
 const verifyEmail = asyncHandler(async (req, res) => {
   const { otp, email } = req.body;

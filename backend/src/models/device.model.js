@@ -12,7 +12,6 @@ const deviceSchema = new Schema(
     fingerprint: {
       type: String,
       required: true,
-      unique: true,
     },
 
     deviceName: {
@@ -68,6 +67,12 @@ const deviceSchema = new Schema(
   },
 );
 
+deviceSchema.index(
+  { user: 1, fingerprint: 1 },
+  { unique: true }
+);
+
+
 deviceSchema.methods.generateAccessToken = function () {
   return jwt.sign(
     {
@@ -95,3 +100,4 @@ deviceSchema.methods.generateRefreshToken = function () {
 };
 
 export const Device = mongoose.model("Device", deviceSchema);
+
