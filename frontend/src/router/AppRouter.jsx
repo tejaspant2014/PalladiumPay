@@ -12,6 +12,8 @@ import NavBar from "../components/NavBar.jsx";
 import Footer from "../components/Footer.jsx";
 import VerifyEmail from "../pages/VerifyEmail.jsx";
 import VerifyPhone from "../pages/VerifyPhone.jsx";
+import ForgotPassword from "../pages/ForgotPassword.jsx";
+import ChangePassword from "../pages/ChangePassword.jsx";
 
 const AppRouter = () => {
     return (
@@ -24,6 +26,7 @@ const AppRouter = () => {
                 <Route path="/login" element={<Login />} />
                 <Route path="/verify-email" element={<VerifyEmail />} />
                 <Route path="/verify-phone" element={<VerifyPhone />} />
+                <Route path="/forgot-password" element={<ForgotPassword/>}/>
 
                 {/* Protected Routes */}
                 <Route element={<ProtectedRoute />}>
@@ -37,6 +40,9 @@ const AppRouter = () => {
                 </Route>
                 <Route element={<ProtectedRoute />}>
                     <Route path="/dashboard" element={<Dashboard />} />
+                </Route>
+                <Route element={<ProtectedRoute />}>
+                    <Route path="/change-password" element={<ChangePassword />} />
                 </Route>
 
             </Routes>
