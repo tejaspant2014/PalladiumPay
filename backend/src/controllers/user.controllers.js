@@ -402,7 +402,7 @@ const logoutUser = asyncHandler(async (req, res) => {
 const getMe = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access");
+    throw new ApiError(401, "Unauthorized Access");
   }
 
   return res
@@ -420,7 +420,7 @@ const updateUser = asyncHandler(async (req, res) => {
   const { name, email, phone } = req.body;
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access");
+    throw new ApiError(401, "Unauthorized Access");
   }
 
   const updatedFields = {};

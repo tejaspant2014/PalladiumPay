@@ -49,7 +49,7 @@ const Login = () => {
               login(userData); 
       
               // 2. Redirect to dashboard (Axios will manage cookies behind the scenes now!)
-              navigate("/dashboard"); 
+              navigate("/dashboard", { replace: true }); 
           } else {
               setError("Login response structurally incorrect.");
           }

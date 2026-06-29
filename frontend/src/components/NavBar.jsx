@@ -40,9 +40,7 @@ const NavBar = () => {
                     <Link to="/transfer" className="text-gray-600 hover:text-blue-600 font-medium transition">
                         Transfer
                     </Link>
-                    <Link to="/create-wallet" className="text-gray-600 hover:text-blue-600 font-medium transition">
-                        Create Wallet 
-                    </Link>
+                    
                     <Link to="/add-money" className="text-gray-600 hover:text-blue-600 font-medium transition">
                         Add Money
                     </Link>

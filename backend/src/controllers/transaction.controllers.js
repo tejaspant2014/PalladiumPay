@@ -18,7 +18,7 @@ const addMoney = asyncHandler(async (req, res) => {
   const { amount, transactionId } = req.body;
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access!");
+    throw new ApiError(401, "Unauthorized Access!");
   }
 
   if (!user.phoneVerified || !user.emailVerified)
@@ -142,7 +142,7 @@ const initiateTransfer = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Phone and Email Verification Required!");
   const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access!");
+    throw new ApiError(401, "Unauthorized Access!");
   }
 
   const numericAmount = Number(amount);
@@ -363,16 +363,15 @@ const initiateTransfer = asyncHandler(async (req, res) => {
 const verifyOTP = asyncHandler(async (req, res) => {
   const { transactionId } = req.params;
 
-  const { otp, phone } = req.body;
+  const { otp } = req.body;
   const user = req.user;
 
-  if (!otp?.trim() || !phone?.trim()) {
+  if (!otp?.trim()) {
     throw new ApiError(400, "All Fields Are Required!");
   }
 
-  const normalizedPhone = phone.trim();
 
-  if (!user) throw new ApiError(403, "Unauthorized Access!");
+  if (!user) throw new ApiError(401, "Unauthorized Access!");
 
   const txn = await Transaction.findOne({
     sender: user._id,
@@ -394,7 +393,7 @@ const verifyOTP = asyncHandler(async (req, res) => {
 
   const otpDoc = await OTP.findOne({
     user: user._id,
-    target: normalizedPhone,
+    target: user.phone,
     type: "PHONE",
   });
 
@@ -426,7 +425,8 @@ const verifyOTP = asyncHandler(async (req, res) => {
 
 const getTransactionHistory = asyncHandler(async (req, res) => {
   const userId = req.user._id;
-  if (!userId) throw new ApiError(403, "Unauthorized Access!");
+  if (!userId) throw new ApiError(401, "Unauthorized Access!");
+  
   const limit = Math.min(parseInt(req.query.limit) || 20, 50);
   const cursor = req.query.cursor;
 
@@ -438,9 +438,12 @@ const getTransactionHistory = asyncHandler(async (req, res) => {
     query._id = { $lt: cursor };
   }
 
+  // Populate profiles to retrieve name and email parameters directly
   const transactions = await Transaction.find(query)
+    .populate("sender", "name email")
+    .populate("beneficiary", "name email")
     .sort({ createdAt: -1, _id: -1 })
-    .limit(limit + 1); // fetch one extra to check next page
+    .limit(limit + 1); 
 
   let hasNextPage = false;
 
@@ -450,16 +453,25 @@ const getTransactionHistory = asyncHandler(async (req, res) => {
   }
 
   const formatted = transactions.map((tx) => {
-    const isSender = tx.sender.toString() === userId.toString();
+    const senderId = tx.sender._id?.toString() || tx.sender.toString();
+    const beneficiaryId = tx.beneficiary._id?.toString() || tx.beneficiary.toString();
 
-    if (isSender) {
+    const isSender = senderId === userId.toString();
+    const isReceiver = beneficiaryId === userId.toString();
+    const isSelfDeposit = isSender && isReceiver;
+
+    if (isSender && !isSelfDeposit) {
       return {
         transactionId: tx.transactionId,
         type: "SENT",
         amount: tx.amount,
         balanceBefore: tx.senderBalanceBefore,
         balanceAfter: tx.senderBalanceAfter,
-        counterparty: tx.beneficiary,
+        counterparty: {
+          id: tx.beneficiary._id,
+          name: tx.beneficiary.name,
+          email: tx.beneficiary.email
+        },
         status: tx.status,
         createdAt: tx.createdAt,
       };
@@ -471,7 +483,11 @@ const getTransactionHistory = asyncHandler(async (req, res) => {
       amount: tx.amount,
       balanceBefore: tx.receiverBalanceBefore,
       balanceAfter: tx.receiverBalanceAfter,
-      counterparty: tx.sender,
+      counterparty: {
+        id: tx.sender._id,
+        name: tx.sender.name,
+        email: tx.sender.email
+      },
       status: tx.status,
       createdAt: tx.createdAt,
     };
@@ -491,43 +507,65 @@ const getTransactionHistory = asyncHandler(async (req, res) => {
     ),
   );
 });
-
 const getTransactionById = asyncHandler(async (req, res) => {
   const user = req.user;
-  if (!user) throw new ApiError(403, "Unauthorized Access!");
+  if (!user) throw new ApiError(401, "Unauthorized Access!");
   const { transactionId } = req.params;
 
-  const tx = await Transaction.findOne({ transactionId });
+  // Fetch transaction and populate the user profiles with name and email fields
+  const tx = await Transaction.findOne({ transactionId })
+    .populate("sender", "name email")
+    .populate("beneficiary", "name email");
 
   if (!tx) {
     throw new ApiError(404, "Transaction not found");
   }
 
-  const isSender = tx.sender.toString() === user._id.toString();
-  const isReceiver = tx.beneficiary.toString() === user._id.toString();
+  // Support both Object matching and fallback check if populated properties are evaluated
+  const senderId = tx.sender._id?.toString() || tx.sender.toString();
+  const beneficiaryId = tx.beneficiary._id?.toString() || tx.beneficiary.toString();
+
+  const isSender = senderId === user._id.toString();
+  const isReceiver = beneficiaryId === user._id.toString();
+  
   if (!isSender && !isReceiver) {
-    throw new ApiError(403, "Access denied");
+    throw new ApiError(401, "Access denied");
   }
 
-  const response = isSender
+  // Explicitly identify addMoney self-deposits
+  const isSelfDeposit = isSender && isReceiver;
+  const treatAsReceiver = isSelfDeposit ? true : isReceiver;
+
+  const response = !treatAsReceiver
     ? {
+        transactionId: tx.transactionId,
         type: "SENT",
         amount: tx.amount,
         balanceBefore: tx.senderBalanceBefore,
         balanceAfter: tx.senderBalanceAfter,
-        counterparty: tx.beneficiary,
+        counterparty: {
+          id: tx.beneficiary._id,
+          name: tx.beneficiary.name,
+          email: tx.beneficiary.email
+        },
         status: tx.status,
         createdAt: tx.createdAt,
       }
     : {
+        transactionId: tx.transactionId,
         type: "RECEIVED",
         amount: tx.amount,
         balanceBefore: tx.receiverBalanceBefore,
         balanceAfter: tx.receiverBalanceAfter,
-        counterparty: tx.sender,
+        counterparty: {
+          id: tx.sender._id,
+          name: tx.sender.name,
+          email: tx.sender.email
+        },
         status: tx.status,
         createdAt: tx.createdAt,
       };
+
   return res
     .status(200)
     .json(new ApiResponse(200, response, "Transaction Fetched Successfully!"));

@@ -6,7 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 const getAllDevices = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access!");
+    throw new ApiError(401, "Unauthorized Access!");
   }
   const limit = Math.min(parseInt(req.query.limit) || 20, 50);
   const cursor = req.query.cursor;
@@ -47,7 +47,7 @@ const getAllDevices = asyncHandler(async (req, res) => {
 const revokeDevice = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access!");
+    throw new ApiError(401, "Unauthorized Access!");
   }
   const { deviceId } = req.params;
   const device = await Device.findById(deviceId);
@@ -69,3 +69,8 @@ const revokeDevice = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, {}, "Device Revoked Successfully!"));
 });
+
+export {
+  getAllDevices,
+  revokeDevice
+}

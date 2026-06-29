@@ -6,7 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 const createWallet = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access!");
+    throw new ApiError(401, "Unauthorized Access!");
   }
 
   if (!user.emailVerified) {
@@ -38,7 +38,7 @@ const createWallet = asyncHandler(async (req, res) => {
 const getWallet = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user) {
-    throw new ApiError(403, "Unauthorized Access!");
+    throw new ApiError(401, "Unauthorized Access!");
   }
 
   const wallet = await Wallet.findOne({

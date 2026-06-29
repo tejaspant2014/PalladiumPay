@@ -1,23 +1,16 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState } from "react";
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-    // 1. Initialize state synchronously from localStorage to prevent route flashing
     const [user, setUser] = useState(() => {
         const savedUser = localStorage.getItem("user");
         return savedUser ? JSON.parse(savedUser) : null;
     });
-    
-    const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        // No API call here anymore, eliminating the 404 error!
-        setLoading(false);
-    }, []);
+    const [loading] = useState(false);
 
     const login = (userData) => {
-        // 2. Persist user info locally so refreshes work
         localStorage.setItem("user", JSON.stringify(userData));
         setUser(userData);
     };
@@ -25,12 +18,15 @@ export const AuthProvider = ({ children }) => {
     const logout = () => {
         localStorage.removeItem("user");
         setUser(null);
+
+        window.location.replace("/login");
     };
 
     return (
         <AuthContext.Provider
             value={{
                 user,
+                setUser,
                 login,
                 logout,
                 loading,
