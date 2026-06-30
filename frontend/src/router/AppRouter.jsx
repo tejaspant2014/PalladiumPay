@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ProtectedRoute from "./ProtectedRoutes.jsx";
 import Landing from "../pages/Landing.jsx";
 import Dashboard from "../pages/Dashboard.jsx";
-import Devices from "../pages/Devices.jsx";
 import Login from "../pages/Login.jsx";
 import Register from "../pages/Register.jsx";
 import TransferHistory from "../pages/TransferHistory.jsx";
@@ -19,6 +18,10 @@ import Wallet from "../pages/Wallet.jsx";
 import AddMoney from "../pages/AddMoney.jsx";
 import VerifyTransferOTP from "../pages/VerifyTransferOTP.jsx";
 import DevicesManagement from "../pages/DeviceManagement.jsx";
+import Profile from "../pages/Profile.jsx";
+import EditProfile from "../pages/EditProfile.jsx";
+import VerifyUpdatedEmail from "../pages/VerifyUpdatedEmail.jsx";
+import VerifyUpdatedPhone from "../pages/VerifyUpdatedPhone.jsx";
 
 const AppRouter = () => {
     return (
@@ -44,10 +47,16 @@ const AppRouter = () => {
                     <Route path="/verify-transfer/:transactionId" element={<VerifyTransferOTP />} />
                 </Route>
                 <Route element={<ProtectedRoute />}>
-                    <Route path="/devices" element={<Devices />} />
+                    <Route path="/devices" element={<DevicesManagement />} />
                 </Route>
                 <Route element={<ProtectedRoute />}>
                     <Route path="/dashboard" element={<Dashboard />} />
+                </Route>
+                <Route element={<ProtectedRoute />}>
+                    <Route path="/profile" element={<Profile />} />
+                </Route>
+                <Route element={<ProtectedRoute />}>
+                    <Route path="/edit-profile" element={<EditProfile />} />
                 </Route>
                 <Route element={<ProtectedRoute />}>
                     <Route path="/device-management" element={<DevicesManagement />} />
@@ -67,7 +76,12 @@ const AppRouter = () => {
                 <Route element={<ProtectedRoute />}>
                 <Route path="/transactions/:transactionId" element={<TransactionDetails />} />
                 </Route>
-                
+                <Route element={<ProtectedRoute />}>
+                <Route path="/verify-updated-email" element={<VerifyUpdatedEmail />} />
+                </Route>
+                <Route element={<ProtectedRoute />}>
+                <Route path="/verify-updated-phone" element={<VerifyUpdatedPhone />} />
+                </Route>
             </Routes>
             <Footer/>
         </BrowserRouter>

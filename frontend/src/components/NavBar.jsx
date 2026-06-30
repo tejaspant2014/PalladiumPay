@@ -31,8 +31,8 @@ const NavBar = () => {
             {isAuthenticated ? (
                 // 🌟 SHOW THIS WHEN LOGGED IN
                 <>
-                    <Link to="/dashboard" className="text-gray-600 hover:text-blue-600 font-medium transition">
-                        Dashboard
+                    <Link to="/profile" className="text-gray-600 hover:text-blue-600 font-medium transition">
+                        Profile
                     </Link>
                     <Link to="/wallet" className="text-gray-600 hover:text-blue-600 font-medium transition">
                         Wallet

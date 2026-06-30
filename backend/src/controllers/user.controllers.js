@@ -303,16 +303,6 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Invalid credentials");
   }
 
-  if (!user.emailVerified || !user.phoneVerified) {
-    await LoginAttempt.create({
-      user: user._id,
-      device: device?._id,
-      success: false,
-      ipAddress,
-    });
-
-    throw new ApiError(403, "Please verify your email and phone first");
-  }
 
   if (!device) {
     device = await Device.create({
@@ -401,19 +391,27 @@ const logoutUser = asyncHandler(async (req, res) => {
 
 const getMe = asyncHandler(async (req, res) => {
   const user = req.user;
+
   if (!user) {
-    throw new ApiError(401, "Unauthorized Access");
+      throw new ApiError(401, "Unauthorized Access");
   }
 
-  return res
-    .status(200)
-    .json(
+  return res.status(200).json(
       new ApiResponse(
-        200,
-        { name: user.name, phone: user.phone, email: user.email },
-        "User fetched successfully!",
-      ),
-    );
+          200,
+          {
+              _id: user._id,
+              name: user.name,
+              email: user.email,
+              phone: user.phone,
+              country: user.homeCountry,
+              emailVerified: user.emailVerified,
+              phoneVerified: user.phoneVerified,
+              createdAt: user.createdAt,
+          },
+          "User fetched successfully!"
+      )
+  );
 });
 
 const updateUser = asyncHandler(async (req, res) => {
@@ -430,14 +428,14 @@ const updateUser = asyncHandler(async (req, res) => {
 
   if (email?.trim()) {
     updatedFields.email = email.trim().toLowerCase();
-    updatedFields.emailVerified = false;
+    if(email.trim().toLowerCase() != user.email) updatedFields.emailVerified = false;
   }
 
   if (phone?.trim()) {
     updatedFields.phone = phone.trim();
-    updatedFields.phoneVerified = false;
+    if(phone.trim() != user.phone) updatedFields.phoneVerified = false;
   }
-  if (email?.trim() || phone?.trim()) {
+  if ((email?.trim() && email.trim().toLowerCase() != user.email) || (phone?.trim() && phone.trim() != user.phone)) {
     await Device.updateMany(
       { user: user._id },
       {
@@ -460,7 +458,9 @@ const updateUser = asyncHandler(async (req, res) => {
       new: true,
       runValidators: true,
     },
-  ).select("-passwordHash");
+  ).select(
+    "_id name email phone homeCountry emailVerified phoneVerified createdAt"
+  );
   return res
     .status(200)
     .json(new ApiResponse(200, userUpd, "User updated successfully"));
@@ -583,6 +583,137 @@ const resetPassword = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "Password reset successful"));
 });
 
+const sendEmailVerificationOTP = asyncHandler(async (req, res) => {
+  const user = req.user;
+
+  if (!user) {
+    throw new ApiError(401, "Unauthorized Access");
+  }
+
+  if (user.emailVerified) {
+    throw new ApiError(400, "Email already verified");
+  }
+
+  const emailOTP = generateOtp();
+  const otpHash = await bcrypt.hash(emailOTP, 10);
+
+  await OTP.deleteMany({
+    user: user._id,
+    type: "EMAIL",
+  });
+
+  await OTP.create({
+    user: user._id,
+    target: user.email,
+    type: "EMAIL",
+    otpHash,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
+  const html = generateOtpHtml(emailOTP);
+  await sendEmail(
+    user.email,
+    "OTP Verification",
+    `Your OTP Code is ${emailOTP}`,
+    html
+  );
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        {},
+        "Verification email sent successfully!"
+      )
+    );
+});
+
+const sendPhoneVerificationOTP = asyncHandler(async (req, res) => {
+  const user = req.user;
+
+  if (!user) {
+    throw new ApiError(401, "Unauthorized Access");
+  }
+
+  if (user.phoneVerified) {
+    throw new ApiError(400, "Phone already verified");
+  }
+
+  const phoneOTP = generateOtp();
+  const otpHash = await bcrypt.hash(phoneOTP, 10);
+
+  await OTP.deleteMany({
+    user: user._id,
+    type: "PHONE",
+  });
+
+  await OTP.create({
+    user: user._id,
+    target: user.phone,
+    type: "PHONE",
+    otpHash,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
+
+  const client = new twilio(
+    process.env.TWILIO_S_ID,
+    process.env.TWILIO_AUTH_TOKEN
+  );
+
+  try {
+    await client.messages.create({
+      body: `Your Palladium Pay verification OTP is ${phoneOTP}`,
+      from: process.env.TWILIO_PHONE,
+      to: user.phone,
+    });
+  } catch (error) {
+    throw new ApiError(500, `SMS Delivery Failed: ${error.message}`);
+  }
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        {},
+        "Verification OTP sent successfully!"
+      )
+    );
+});
+
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  // 1. Grab the refresh token from cookies (or headers)
+  const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
+
+  if (!incomingRefreshToken) {
+    throw new ApiError(401, "Refresh token is missing!");
+  }
+
+  // 2. Verify the token hasn't expired or been tampered with
+  const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
+  
+  const user = await User.findById(decodedToken?._id);
+  if (!user) {
+    throw new ApiError(401, "Invalid refresh token!");
+  }
+
+  // 3. Security Check: Cross-reference with the token saved in the Database
+  if (incomingRefreshToken !== user.refreshToken) {
+    throw new ApiError(401, "Refresh token is expired or used!");
+  }
+
+  // 4. Generate & Send a shiny new Access Token
+  const { accessToken, newRefreshToken } = await generateAccessAndRefereshTokens(user._id);
+
+  const options = { httpOnly: true, secure: true };
+
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", newRefreshToken, options) // Optional: Rotate the refresh token
+    .json(new ApiResponse(200, { accessToken }, "Access token refreshed successfully!"));
+});
+
 export {
   registerUser,
   verifyEmail,
@@ -594,4 +725,7 @@ export {
   forgotPassword,
   resetPassword,
   changePassword,
+  sendEmailVerificationOTP,
+  sendPhoneVerificationOTP,
+  refreshAccessToken,
 };

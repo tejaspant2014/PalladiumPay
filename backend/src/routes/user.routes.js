@@ -10,6 +10,9 @@ import {
   resetPassword,
   updateUser,
   changePassword,
+  sendEmailVerificationOTP,
+  sendPhoneVerificationOTP,
+  refreshAccessToken
 } from "../controllers/user.controllers.js"; // Adjust the import path based on your file tree
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
@@ -28,5 +31,17 @@ userRouter.route("/logout").post(verifyJWT, logoutUser);
 userRouter.route("/me").get(verifyJWT, getMe);
 userRouter.route("/update-profile").patch(verifyJWT, updateUser);
 userRouter.route("/change-password").patch(verifyJWT, changePassword);
+userRouter.post(
+  "/verify-email/send-otp",
+  verifyJWT,
+  sendEmailVerificationOTP
+);
 
+userRouter.post(
+  "/verify-phone/send-otp",
+  verifyJWT,
+  sendPhoneVerificationOTP
+);
+
+userRouter.route("/refresh-token").post(refreshAccessToken);
 export default userRouter;
