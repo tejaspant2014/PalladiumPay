@@ -7,6 +7,8 @@ const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
   secure: false,
+  connectionTimeout: 20000,
+  socketTimeout: 30000,
   auth: {
     type: "OAuth2",
     user: process.env.GOOGLE_USER,
@@ -16,27 +18,18 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-transporter.verify((error, success) => {
-  if (error) {
-    console.error("Error connecting to email server:", error);
-  } else {
-    console.log("Email server is ready to send messages");
-  }
-});
+// ❌ no verify on boot
 
 export const sendEmail = async (to, subject, text, html) => {
   try {
-    const info = await transporter.sendMail({
-      from: `"Your Name" <${process.env.EMAIL_USER}>`, // sender address
-      to, // list of receivers
-      subject, // Subject line
-      text, // plain text body
-      html, // html body
+    return await transporter.sendMail({
+      from: `"Your Name" <${process.env.GOOGLE_USER}>`,
+      to,
+      subject,
+      text,
+      html,
     });
-
-    console.log("Message sent: %s", info.messageId);
-    console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
   } catch (error) {
-    console.error("Error sending email:", error);
+    console.error("Email send failed:", error);
   }
 };
