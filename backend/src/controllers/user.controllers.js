@@ -5,6 +5,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { sendEmail } from "../services/email.service.js";
 import { generateOtp, generateOtpHtml } from "../utils/OtpGenerator.js";
+import jwt from "jsonwebtoken";
 import { OTP } from "../models/otp.model.js";
 import bcrypt from "bcrypt";
 import geoip from "geoip-lite";
