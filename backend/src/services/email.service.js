@@ -1,37 +1,30 @@
-import Brevo from "@getbrevo/brevo";
+import { BrevoClient } from "@getbrevo/brevo";
 
-const apiInstance = new Brevo.TransactionalEmailsApi();
-
-apiInstance.setApiKey(
-  Brevo.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY
-);
+const brevo = new BrevoClient({
+  apiKey: process.env.BREVO_API_KEY,
+});
 
 export const sendEmail = async (to, subject, text, html) => {
   try {
-    const sendSmtpEmail = new Brevo.SendSmtpEmail();
-
-    sendSmtpEmail.sender = {
-      name: "Palladium Pay",
-      email: process.env.BREVO_EMAIL,
-    };
-
-    sendSmtpEmail.to = [
-      {
-        email: to,
+    const response = await brevo.transactionalEmails.sendTransacEmail({
+      sender: {
+        name: "Palladium Pay",
+        email: process.env.BREVO_EMAIL,
       },
-    ];
-
-    sendSmtpEmail.subject = subject;
-    sendSmtpEmail.textContent = text;
-    sendSmtpEmail.htmlContent = html;
-
-    const response = await apiInstance.sendTransacEmail(sendSmtpEmail);
+      to: [
+        {
+          email: to,
+        },
+      ],
+      subject,
+      textContent: text,
+      htmlContent: html,
+    });
 
     console.log("Email sent:", response);
     return response;
   } catch (error) {
-    console.error("Brevo API Error:", error.response?.body || error);
+    console.error("Brevo API Error:", error);
     throw error;
   }
 };
