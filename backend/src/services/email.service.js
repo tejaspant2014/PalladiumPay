@@ -1,29 +1,37 @@
-import nodemailer from "nodemailer";
+import Brevo from "@getbrevo/brevo";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.BREVO_SMTP_HOST,
-  port: Number(process.env.BREVO_SMTP_PORT),
-  secure: false,
-  auth: {
-    user: process.env.BREVO_SMTP_LOGIN,
-    pass: process.env.BREVO_SMTP_KEY,
-  },
-});
+const apiInstance = new Brevo.TransactionalEmailsApi();
+
+apiInstance.setApiKey(
+  Brevo.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
+);
 
 export const sendEmail = async (to, subject, text, html) => {
   try {
-    const info = await transporter.sendMail({
-      from: `Palladium Pay <${process.env.BREVO_EMAIL}>`,
-      to,
-      subject,
-      text,
-      html,
-    });
+    const sendSmtpEmail = new Brevo.SendSmtpEmail();
 
-    console.log("Email sent:", info.messageId);
-    return info;
+    sendSmtpEmail.sender = {
+      name: "Palladium Pay",
+      email: process.env.BREVO_EMAIL,
+    };
+
+    sendSmtpEmail.to = [
+      {
+        email: to,
+      },
+    ];
+
+    sendSmtpEmail.subject = subject;
+    sendSmtpEmail.textContent = text;
+    sendSmtpEmail.htmlContent = html;
+
+    const response = await apiInstance.sendTransacEmail(sendSmtpEmail);
+
+    console.log("Email sent:", response);
+    return response;
   } catch (error) {
-    console.error("Email send failed:", error);
+    console.error("Brevo API Error:", error.response?.body || error);
     throw error;
   }
 };
