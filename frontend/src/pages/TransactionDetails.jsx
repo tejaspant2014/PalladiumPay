@@ -66,7 +66,7 @@ const TransactionDetails = () => {
                 {/* Header Actions */}
                 <div className="mb-6 flex items-center">
                     <button 
-                        onClick={() => navigate(-1)} 
+                        onClick={() => navigate("/transactions")} 
                         className="flex items-center text-sm font-medium text-gray-600 hover:text-gray-900 transition gap-2 cursor-pointer"
                     >
                         <ArrowLeft size={18} />
