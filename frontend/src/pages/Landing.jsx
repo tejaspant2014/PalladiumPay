@@ -28,7 +28,7 @@ const Landing = () => {
                     </p>
 
                     <div className="flex gap-4 mt-10">
-                        <Button>Get Started</Button>
+                        <Button >Get Started</Button>
                         <Button variant="secondary">
                             Learn More
                         </Button>

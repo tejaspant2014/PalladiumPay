@@ -48,17 +48,13 @@ const Transfer = () => {
             });
 
             const txn = data.data;
-
-            console.log(txn);
-            console.log(txn.otpRequired);
-            console.log(typeof txn.otpRequired);
             
-            if (txn.otpRequired === true) {
+            if (txn.transaction.otpRequired === true) {
                 
-                navigate(`/verify-transfer/${txn.transactionId}`);
+                navigate(`/verify-transfer/${txn.transaction.transactionId}`);
             } else {
                 
-                navigate(`/transactions/${txn.transactionId}`);
+                navigate(`/transactions/${txn.transaction.transactionId}`);
             }
 
         } catch (err) {
