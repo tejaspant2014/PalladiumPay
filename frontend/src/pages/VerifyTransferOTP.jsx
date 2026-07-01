@@ -47,7 +47,7 @@ const VerifyTransferOTP = () => {
                 }
             );
 
-            navigate("/transaction");
+            navigate(`/transactions/${transactionId}`);
 
         } catch (err) {
             setError(
