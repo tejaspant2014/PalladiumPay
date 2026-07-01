@@ -49,7 +49,7 @@ const Transfer = () => {
 
             const txn = data.data;
             
-            if (txn.transaction.otpRequired === true) {
+            if (txn.otpRequired === true) {
                 
                 navigate(`/verify-transfer/${txn.transactionId}`);
             } else {
