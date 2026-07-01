@@ -23,7 +23,11 @@ const addMoney = asyncHandler(async (req, res) => {
 
   if (!user.phoneVerified || !user.emailVerified)
     throw new ApiError(403, "Phone and Email Verification Required!");
-  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const forwarded = req.headers["x-forwarded-for"];
+
+  const ipAddress = forwarded
+    ? forwarded.split(",")[0].trim()
+    : req.socket.remoteAddress;
 
   const numericAmount = Number(amount);
   if (isNaN(numericAmount) || numericAmount <= 0) {
@@ -140,7 +144,11 @@ const initiateTransfer = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user.phoneVerified || !user.emailVerified)
     throw new ApiError(403, "Phone and Email Verification Required!");
-  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const forwarded = req.headers["x-forwarded-for"];
+
+  const ipAddress = forwarded
+    ? forwarded.split(",")[0].trim()
+    : req.socket.remoteAddress;
   if (!user) {
     throw new ApiError(401, "Unauthorized Access!");
   }

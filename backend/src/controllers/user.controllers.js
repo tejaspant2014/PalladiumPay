@@ -17,7 +17,11 @@ import mongoose from "mongoose";
 const registerUser = asyncHandler(async (req, res) => {
   const { name, email, phone, password, homeCountry, fingerprint, deviceName } =
     req.body;
-  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const forwarded = req.headers["x-forwarded-for"];
+
+    const ipAddress = forwarded
+      ? forwarded.split(",")[0].trim()
+      : req.socket.remoteAddress;
 
   if (
     !name?.trim() ||
@@ -274,7 +278,11 @@ const loginUser = asyncHandler(async (req, res) => {
 
   const normalizedEmail = email.trim().toLowerCase();
 
-  const ipAddress = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const forwarded = req.headers["x-forwarded-for"];
+
+  const ipAddress = forwarded
+    ? forwarded.split(",")[0].trim()
+    : req.socket.remoteAddress;
 
   const geo = geoip.lookup(ipAddress);
 
