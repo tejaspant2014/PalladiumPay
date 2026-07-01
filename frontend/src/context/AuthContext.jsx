@@ -1,7 +1,7 @@
 import { createContext, useContext, useState } from "react";
-
+import { useNavigate } from "react-router-dom";
 const AuthContext = createContext();
-
+const navigate = useNavigate();
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(() => {
         const savedUser = localStorage.getItem("user");
@@ -18,8 +18,8 @@ export const AuthProvider = ({ children }) => {
     const logout = () => {
         localStorage.removeItem("user");
         setUser(null);
-
-        window.location.replace("/login");
+    
+        navigate("/login", { replace: true });
     };
 
     return (
