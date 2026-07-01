@@ -51,7 +51,7 @@ const Transfer = () => {
             
             if (txn.transaction.otpRequired === true) {
                 
-                navigate(`/verify-transfer/${txn.transaction.transactionId}`);
+                navigate(`/verify-transfer/${txn.transactionId}`);
             } else {
                 
                 navigate(`/transactions/${txn.transaction.transactionId}`);
